@@ -47,9 +47,12 @@ RUN mkdir -p /app/data /app/logs /app/services/cache/search
 # Make the entrypoint executable (it lives in docker/entrypoint.sh inside the repo).
 RUN chmod +x /app/docker/entrypoint.sh
 
-# Declares /app/data as a mount point. Without a named volume at runtime,
-# Docker creates an anonymous one. The compose file below pins it properly.
-VOLUME ["/app/data", "/app/logs"]
+# NOTE: intentionally no VOLUME instruction. The companion docker-compose.yml
+# mounts NAMED volumes onto /app/data and /app/logs. A Dockerfile VOLUME forces
+# ANONYMOUS volumes (random 64-hex names) whenever the image runs without those
+# explicit mounts — e.g. when deployed as a Dokploy "Application" instead of a
+# "Compose" service — silently breaking managed persistence and Volume Backups.
+# Always deploy via Compose so the named volumes apply.
 
 EXPOSE 7000
 

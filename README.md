@@ -10,6 +10,14 @@ Intended for [Dokploy](https://dokploy.com), but works with any host that runs D
 
 ## Deploy on Dokploy
 
+> [!IMPORTANT]
+> Deploy this as a **Compose** service — **not** an "Application". A Dokploy
+> Application builds the Dockerfile on its own: it ignores this repo's
+> `docker-compose.yml`, so the named volumes are never created (persistence
+> silently falls back to throwaway anonymous volumes) and the ChromaDB / SearXNG
+> / ntfy services Odysseus needs never start. If `docker volume ls` on the host
+> shows random 64-hex volume names, you've hit this — see [Troubleshooting](#troubleshooting).
+
 1. **Create service**: Project → Create Service → **Compose**
 2. **Provider**: Git → point at this repo, branch `main`, compose path `docker-compose.yml`
 3. **Environment**: copy values from `.env.example`. At minimum set `ODYSSEUS_ADMIN_PASSWORD` and `SEARXNG_SECRET`.
@@ -44,6 +52,25 @@ For production stability, pin `ODYSSEUS_REF` to a specific commit SHA instead of
 Back up the host paths under `/var/lib/docker/volumes/<project>_odysseus_data/_data` and `<project>_chromadb_data/_data`. Exclude `odysseus_hf_cache` and `odysseus_local` — they're large and re-downloadable.
 
 Dokploy has a built-in Backups feature for service volumes; point it at the volumes above.
+
+## Troubleshooting
+
+### `docker volume ls` shows random 64-hex names instead of `<project>_odysseus_data`
+
+Those are **anonymous** volumes, and they mean the stack was deployed as a Dokploy
+**Application** (Dockerfile only) rather than a **Compose** service. An Application
+build ignores `docker-compose.yml` entirely: the named volumes are never created,
+and the supporting services (ChromaDB, SearXNG, ntfy) never start. Your data lands
+in anonymous volumes that happen to survive an in-place redeploy but are orphaned by
+any full `docker compose down`/`up`, and they can't be targeted by Volume Backups.
+
+**Fix:** recreate the service as a **Compose** service (see [Deploy on Dokploy](#deploy-on-dokploy)),
+then confirm on the host:
+
+```bash
+docker volume ls       # expect named volumes like <project>_odysseus_data
+docker volume prune    # remove the old anonymous volumes (only once the old service is gone)
+```
 
 ## Security checklist
 
