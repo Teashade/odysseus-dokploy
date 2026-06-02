@@ -1,0 +1,94 @@
+# Companion compose file for the custom Dockerfile.
+# - Builds Odysseus from the local Dockerfile (which clones from GitHub).
+# - Pins ALL persistent data to NAMED Docker volumes (survive redeploys,
+#   container recreates, image rebuilds — only `docker volume rm` destroys them).
+# - Keeps the supporting services Odysseus needs: ChromaDB, SearXNG, ntfy.
+#
+# On Dokploy: create a "Compose" service pointed at this file. Domain target
+# is the `odysseus` service on container port 7000.
+
+services:
+  odysseus:
+    build:
+      context: .
+      args:
+        # Pin to a commit SHA in production. Set CACHEBUST to any new value
+        # (e.g. `date +%s`) to force a re-clone without changing the ref.
+        ODYSSEUS_REF: main
+        CACHEBUST: ${CACHEBUST:-1}
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-7000}:7000"
+    volumes:
+      - odysseus_data:/app/data
+      - odysseus_logs:/app/logs
+      - odysseus_ssh:/app/.ssh
+      - odysseus_hf_cache:/app/.cache/huggingface
+      - odysseus_local:/app/.local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - SEARXNG_INSTANCE=http://searxng:8080
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - LOCALHOST_BYPASS=false
+      - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
+      - ODYSSEUS_ADMIN_PASSWORD=${ODYSSEUS_ADMIN_PASSWORD:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    restart: unless-stopped
+
+  chromadb:
+    image: docker.io/chromadb/chroma:latest
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    volumes:
+      - searxng_data:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-change-me-to-a-long-random-string}
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, DAC_OVERRIDE]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  ntfy:
+    image: docker.io/binwiederhier/ntfy
+    command: serve
+    volumes:
+      - ntfy_cache:/var/cache/ntfy
+    restart: unless-stopped
+
+# Named volumes — these are the persistence layer.
+# Live at /var/lib/docker/volumes/<project>_<name>/_data on the host.
+# Survive `docker compose down`, image rebuilds, and Dokploy redeploys.
+# Only `docker compose down -v` or `docker volume rm` removes them.
+volumes:
+  odysseus_data:       # SQLite DB, memory.json, settings, uploads, personal_docs
+  odysseus_logs:
+  odysseus_ssh:        # Cookbook remote-server identity
+  odysseus_hf_cache:   # HuggingFace model cache (can grow large — exclude from backups)
+  odysseus_local:      # Cookbook-installed Python CLIs (vLLM, llama-cpp-python, etc.)
+  chromadb_data:       # Vector memory store
+  searxng_data:
+  ntfy_cache:
